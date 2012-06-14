@@ -134,6 +134,7 @@ var channel = {
 
 var SYSTEM = "system"
 var PROTOCOL_VERSION = "0.3"
+var SERVER_IP = "127.0.0.1";
 var MAX_HANDLE_LENGTH = 8
 
 var ACTION_SUCCESS =1
@@ -186,7 +187,7 @@ Array.prototype.ip_remove = function(){
 }
 
 var conn;
-var socket = io.connect('96.238.59.165'); // '192.168.1.108');
+var socket = io.connect(SERVER_IP);
 socket.on("Artemis:local_traffic", function(data){
 	client.recieve_local_traffic(data);
 });
