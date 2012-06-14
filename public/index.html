@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Ceres Communications Base, Main Belt -- Artemis</title>
+<script type="text/javascript" src="javascripts/jquery.js"></script>
+<script type="text/javascript" src="/socket.io/socket.io.js"></script>
+<style type="text/css">
+body{
+	background: #000;
+	}
+a:link{
+	text-decoration: none;
+}
+#name_entry{
+	position: absolute;
+	border-radius: 10px;
+	background: #eeece8;
+	padding: 3em;
+	}
+#name_entry #name_submiter{
+	float: right;
+}
+#client{
+	display: none;
+	position: absolute;
+	top: 0px;
+	left: 0px;
+	margin: 0em;
+	padding: 0px;
+	font-family: monospace;
+	width: 100%;
+	height: 100%;
+	background: #eeece8;
+	color: #fff;
+}
+#tab_bar{
+	position: absolute;
+}
+.channel_tab{
+	display: inline-block;
+	width: 100px;
+	height: 25px;
+	padding: 5px 3px;
+	border: outset #eeece8 2px;
+	border-bottom: 0px;
+	color: black;
+	/*border-left:  single black 1px;
+	border-right: single black 1px;*/
+	border-top-left-radius: 6px;
+	border-top-right-radius: 6px;
+	text-align: center;
+	background-color: #eeece8;
+	/*font-weight: bold;*/
+	/*font-size: 8pt;*/
+	font-family: monospace;
+}
+.channel_tab:hover{
+	background-color: #fffdf9;
+}
+.channel_tab:active{
+	background-color: #dddbd7;
+	border-style: inset;
+}
+#chat_input, .chat_output, .chat_who{
+	position: absolute;
+	font-family: monospace;
+	font-weight: bold;
+	background: #000;
+	border: inset 2px #eeece8;
+	color: #ff8;
+	margin: 0em;
+	padding: 0px;
+}
+.chat_output, .chat_who{
+	overflow-y: scroll;
+}
+.chat_who li{
+	padding-left: 1em;
+}
+.traffic{
+	color: #396;
+	font-style: italic;
+}
+.time_stamp{
+	color: #998;
+}
+.message{
+	color: #998;
+}
+.message .sender{
+	color: white;
+	font-weight: bold;
+}
+.message .message_body{
+	color: #ff8;
+}
+.client_info{
+	color: #ccc;
+}
+.join_link:link{
+	color: #fff;
+	font-weight: bold;
+	text-decoration: underline;
+}
+/*#chat_who li:first-letter{ // Does not work on symbols!
+	color: red;
+}*/
+</style>
+</head>
+<body>
+<div id="name_entry">
+	<span>Logging into Ceres chat server. <br /> Please select a name.</span>
+	<br /><br />
+	<form id="name_submission">
+		<label for="user_name">Name:</label>
+		<input type="text" id="user_name" maxlength="16" size="16" />
+		<br />
+		<input id="name_submiter" type="submit" value="Submit" />
+	</form>
+</div>
+<div id="client">
+	<form id="client_form">
+		<div id="tab_bar"></div>
+		<div id="channels_container"></div>
+		<input id="chat_input" type="text" />
+	</form>
+</div>
+	<script type="text/javascript">
+// TO DO: temporary channel refactor variables.
+var channel = {
+	name: "Ceres_Diagnostics"
+}
+// End TO DO
+
+var SYSTEM = "system"
+var PROTOCOL_VERSION = "0.3"
+var MAX_HANDLE_LENGTH = 8
+
+var ACTION_SUCCESS =1
+var ACTION_FAILURE =2
+var ACTION_MALFORMED =3
+var ACTION_COLLISION =4
+var ACTION_NONEXIST =5
+var ACTION_UNREACHABLE =6
+//var ACTION_DEATH =8
+
+var ACTION_PING = 10
+var ACTION_REGSERVER = 11
+var ACTION_SERVERUPDATE = 12
+var ACTION_DISCONNECT = 13
+var ACTION_REGUSER = 14
+var ACTION_BADUSER = 15
+var ACTION_CONFLICT = 16
+var ACTION_CHANSYNC = 17
+
+var ACTION_MESSAGE = 30
+var ACTION_JOIN = 31
+var ACTION_LEAVE = 32
+var ACTION_DENIED = 33
+var ACTION_OPERATE = 34
+var ACTION_PREFERENCES = 35
+var ACTION_TRAFFIC = 36
+var ACTION_EMOTE = 37
+var ACTION_CODE = 38
+
+var PERMISSION_OWNER = 6
+var PERMISSION_OPERATOR = 5
+var PERMISSION_VOICED = 4
+var PERMISSION_NORMAL = 3
+var PERMISSION_MUTED = 2
+var PERMISSION_BLOCKED = 1
+var PERMISSION_ACTIVEFLAG = 16
+
+var STATUS_NORMAL = 0
+var STATUS_CLOSED = 1
+var STATUS_HIDDEN = 2
+var STATUS_LOCKED = 4
+
+Array.prototype.ip_remove = function(){
+	for(var index = 0; index < arguments.length; index++){
+		var removal = arguments[index];
+		var removal_index = this.indexOf(removal);
+		if(removal_index == -1){ continue}
+		this.splice(removal_index, 1);
+	}
+}
+
+var conn;
+var socket = io.connect('96.238.59.165'); // '192.168.1.108');
+socket.on("Artemis:local_traffic", function(data){
+	client.recieve_local_traffic(data);
+});
+function Message(sender, target, action, body){
+	this.sender = sender;
+	this.target = target;
+	this.action = action;
+	this.body   = body;
+	this.time   = (new Date()).getTime();
+}
+var client = {
+	name:   undefined,
+	channel_info: {},
+	time_stamps: true,
+	register_user: function (desired_name){
+		var user_action = {
+			"action" : "register",
+			content: {
+				"name" : desired_name
+				}
+			};
+		socket.emit("Artemis:local_traffic", user_action);
+	},
+	confirm_registration: function (supplied_name){
+		this.name = supplied_name;
+		this.skin.add_channel("system");
+		this.skin.resize();
+	},
+	recieve_local_traffic: function (local_traffic){
+		switch(local_traffic.action){
+			case "message":
+				this.recieve_message(local_traffic.content);
+			break;
+			case "confirm_register":
+				if(local_traffic.content !== undefined){
+					this.confirm_registration(local_traffic.content);
+				}
+				else{
+					alert("There was an error registering the requested name.")
+				}
+			break;
+			case "channel_list":
+				this.skin.display_channels(local_traffic.content);
+			break;
+		}
+	},
+	recieve_message: function (msg_object){
+		var M = msg_object;
+		//console.log("Message Recieved: "+JSON.stringify(msg_object));
+		switch(msg_object.action){
+			case ACTION_MESSAGE:
+				this.skin.write_message(msg_object);
+				break;
+			case ACTION_TRAFFIC:
+				this.traffic(msg_object.body.name, msg_object, msg_object.body.status);
+				break;
+			case "who_list":
+				this.who_list(msg_object.body);
+				break;
+		}
+	},
+	who_list: function(who_data){
+		this.channel_info[who_data.channel] = who_data.permissions;
+		this.skin.update_who(who_data.channel);
+	},
+	traffic: function(user_name, msg_object, status){
+		var target_array = msg_object.target.split("#");
+		var channel_name = target_array[1];
+		var channel = this.channel_info[channel_name]
+		if(!channel){ return}
+		if(status <= 0){
+			var success = delete channel[user_name];
+			if(success){
+				this.skin.update_who(channel_name);
+			}
+		}
+		else{
+			channel[user_name] = status;
+			this.skin.update_who(channel_name);	
+		}
+		this.skin.traffic(user_name, msg_object, status);
+	},
+	handle_command: function (words){
+		var command = this.commands[words[0]];
+		if(!command){
+			// TO DO: system message
+			return;
+		}
+		command(words.slice(1));
+	},
+	commands: {
+		join: function (words){
+			if(!words.length){ return}
+			var channel = words[0];
+			if(client.skin.channels[channel]){
+				client.skin.switch_channel(channel);
+				return;
+			}
+			var join_msg = new Message(
+				client.name,
+				"#"+channel,
+				ACTION_JOIN
+			);
+			client.skin.add_channel(channel);
+			socket.emit("Artemis:local_traffic", {action: "message", content: join_msg});
+		},
+		leave: function (words){
+			if(client.skin.current_channel.name == SYSTEM){
+				// TO DO: system message
+				return
+				}
+			var leave_msg = new Message(
+				client.name,
+				"#"+client.skin.current_channel.name,
+				ACTION_LEAVE
+			);
+			client.skin.remove_channel(client.skin.current_channel.name);
+			socket.emit("Artemis:local_traffic", {action: "message", content: leave_msg});
+		},
+		list: function (words){
+			socket.emit("Artemis:local_traffic", {action: "channel_list", content: null});
+		}/*,
+		nick: function (words){
+			var desired_nick = words[0];
+			var nick_msg = new Message(
+				client.name,
+				SYSTEM,
+				ACTION_PREFERENCES,
+				{nick: desired_nick}
+			);
+			socket.emit("Artemis:local_traffic", {action: "message", content: nick_msg});
+		}*/
+	}
+};
+$("#name_submission").get(0).onsubmit = function (event){
+	if(client.name !== undefined){
+		event.preventDefault();
+		return false
+	}
+	var name_entry = $("#user_name").get(0);
+	var desired_name = name_entry.value;
+	if(!desired_name){
+		alert('Please Enter a Name')
+		return
+	}
+	event.preventDefault();
+	client.register_user(desired_name);
+	return false;
+}
+client.skin = {
+	channels: {},
+	current_channel: undefined,
+	container: $("#client").get(0),
+	form:    $("#client_form").get(0),
+	tab_bar: $("#tab_bar").get(0),
+	channels_container: $("#channels_container").get(0),
+	input:   $("#chat_input" ).get(0),
+	scroll_pad: undefined,
+	style: {
+		external_border: 15,
+		tab_height: 25,
+		usable_width: undefined,
+		usable_height: undefined,
+		who_width: 180,
+	},
+	add_channel: function(channel_name, dont_switch){
+		client.channel_info[channel_name] = {};
+		var channel = {name: channel_name};
+		if(!this.current_channel){
+			this.current_channel = channel;
+		}
+		this.channels[channel.name] = channel;
+		var tab_element = document.createElement("span");
+		channel.tab = tab_element;
+		tab_element.setAttribute("class", "channel_tab");
+		tab_element.textContent = channel.name;
+		this.tab_bar.appendChild(tab_element);
+		tab_element.onclick = function (event){
+			client.skin.switch_channel(this.textContent);
+			client.skin.input.focus()
+			event.preventDefault();
+			return false;
+		};
+		var output_element = document.createElement("div");
+		channel.output = output_element;
+		output_element.setAttribute("class", "chat_output");
+		var who_element = document.createElement("ul");
+		who_element.setAttribute("class", "chat_who");
+		channel.who = who_element;
+		var visibility_container = document.createElement("div");
+		channel.container = visibility_container;
+		visibility_container.appendChild(output_element);
+		visibility_container.appendChild(who_element);
+		this.channels_container.appendChild(visibility_container);
+		this.resize_channel(channel);
+		if(!dont_switch){
+			this.switch_channel(channel_name);
+		}
+	},
+	remove_channel: function(channel_name){
+		var channel_object = this.channels[channel_name];
+		if(!channel_object){ return}
+		var switching = false;
+		if(this.current_channel == channel_object){ switching = true}
+		this.channels_container.removeChild(channel_object.container);
+		this.tab_bar.removeChild(channel_object.tab);
+		channel_object.tab = null;
+		channel_object.output = null;
+		channel_object.who = null;
+		channel_object.container;
+		delete this.channels[channel_name];
+		if(!switching){ return}
+		for(var channel_index in this.channels){
+			this.switch_channel(channel_index);
+			break;
+		}
+	},
+	switch_channel: function(channel_name){
+		this.current_channel = this.channels[channel_name];
+		for(var _channel_name in this.channels){
+			var channel = this.channels[_channel_name];
+			if(channel_name == channel.name){
+				channel.container.style.display = "block";
+			}
+			else{
+				channel.container.style.display = "none";
+			}
+		}
+	},
+	resize: function (){
+		var e  = document.documentElement;
+		var g  = document.getElementsByTagName('body')[0];
+		this.width = window.innerWidth  || e.clientWidth  || g.clientWidth;
+		this.height = window.innerHeight || e.clientHeight || g.clientHeight;
+		if(client.name === undefined){
+			this.container.style.display = "none";
+			//var name_entry = $("#name_entry").get(0);
+		}
+		else{
+			this.container.style.display = "block";
+			var name_entry = $("#name_entry").get(0);
+			name_entry.style.display = "none";
+			this.style.usable_width  = this.width  - (this.style.external_border*2);
+			this.style.usable_height = this.height - (this.style.external_border*2);
+			this.tab_bar.style.left   = this.style.external_border+"px";
+			this.tab_bar.style.top    = this.style.external_border+"px";
+			this.tab_bar.style.height = this.style.tab_height+"px";
+			this.tab_bar.style.width  = this.style.usable_width+"px";
+			this.input.style.left     = this.style.external_border+"px";
+			this.input.style.bottom   = this.style.external_border+10+"px";
+			this.input.style.width    = this.style.usable_width   +"px";
+			this.scroll_pad = this.style.usable_height-this.style.tab_height-50;
+			for(var channel_name in this.channels){
+				var channel = this.channels[channel_name]
+				this.resize_channel(channel)
+			}
+		}
+	},
+	resize_channel: function (channel){
+		channel.output.style.left    = this.style.external_border+"px";
+		channel.output.style.top     = this.style.external_border+this.style.tab_height+"px";
+		channel.output.style.width   = this.style.usable_width-this.style.who_width+"px";
+		channel.output.style.height  = this.style.usable_height-this.style.tab_height-50+"px";
+		channel.who.style.left       = this.style.external_border+(this.style.usable_width-this.style.who_width)+"px";
+		channel.who.style.top        = this.style.external_border+this.style.tab_height+"px";
+		channel.who.style.width      = this.style.who_width+"px";
+		channel.who.style.height     = this.style.usable_height-this.style.tab_height-50+"px";
+	},
+	time_stamp: function (){
+		if(!client.time_stamps){ return ""}
+		var current_time = new Date();
+		//return "["+current_time.getHours()+":"+current_time.getMinutes()+"] ";
+		return "["+current_time.toLocaleTimeString()+"] ";
+	},
+	channel_from_target: function (target){
+		var target_array = target.split("#");
+		var channel;
+		if(target_array.length > 0){
+			channel = this.channels[target_array[1]]
+		}
+		if(!channel){ return}
+		return channel.output
+	},
+	add_line: function (msg_element, output, scroll_bottom){
+		if(!output){
+			output = this.current_channel.output;
+		}
+		var auto_scroll = (output.scrollTop == output.scrollHeight-this.scroll_pad);
+		output.appendChild(msg_element);
+		if(scroll_bottom || auto_scroll){
+			output.scrollTop = output.scrollHeight;
+		}
+	},
+	write_message: function (msg_object){
+		//{ action: "message", sender: this.name, body: message}
+		var msg_span   = document.createElement("div");
+		var time_stamp = document.createElement("span");
+		var name_span  = document.createElement("span");
+		var text_span  = document.createElement("span");
+		var separator  = document.createTextNode(": ");
+		msg_span.setAttribute('class', 'message');
+		time_stamp.setAttribute('class', 'time_stamp');
+		name_span.setAttribute('class', 'sender');
+		text_span.setAttribute('class', 'message_body');
+		time_stamp.textContent = this.time_stamp();
+		name_span.textContent = msg_object.sender
+		text_span.textContent = msg_object.body
+		msg_span.appendChild(time_stamp);
+		msg_span.appendChild(name_span);
+		msg_span.appendChild(separator);
+		msg_span.appendChild(text_span);
+		var output = this.channel_from_target(msg_object.target);
+		this.add_line(msg_span, output, (msg_object.sender == client.name));
+	},
+	traffic: function(user_name, msg_object, status){
+		var msg_div = document.createElement("div");
+		msg_div.setAttribute('class', 'traffic');
+		msg_div.textContent = this.time_stamp() + user_name + " has " + ((status > 0)? "connected" : "disconnected") + "."
+		var output = this.channel_from_target(msg_object.target);
+		this.add_line(msg_div, output);
+	},
+	update_who: function (channel_name){
+		var current_channel = this.channels[channel_name]
+		if(!current_channel){ return}
+		current_channel.who.innerHTML = null;
+		var channel_owner = [];
+		var channel_operator = [];
+		var channel_voice = [];
+		var channel_regular = [];
+		var channel_mute = [];
+		var channel_permissions = client.channel_info[channel_name];
+		for(var user_name in channel_permissions){
+			switch(channel_permissions[user_name]){
+				case  3: channel_owner.push(   "#" + user_name); break;
+				case  2: channel_operator.push("@" + user_name); break;
+				case  1: channel_voice.push(   "+" + user_name); break;
+				case  0: channel_regular.push( "*" + user_name); break;
+				case -1: channel_mute.push(    "-" + user_name); break;
+			}
+		}
+		var channel_sorted = [];
+		var permission_levels = [
+			channel_owner,
+			channel_operator,
+			channel_voice,
+			channel_regular,
+			channel_mute
+		]
+		while(permission_levels.length){
+			var permission_list = permission_levels[0];
+			permission_levels.ip_remove(permission_list);
+			while(permission_list.length){
+				var permission_item = permission_list[0];
+				permission_list.ip_remove(permission_item);
+				channel_sorted.push(permission_item);
+			}
+		}
+		for(var index = 0; index < channel_sorted.length; index++){
+			var user_name = channel_sorted[index];
+			var name_span = document.createElement("li"); 
+			name_span.textContent = user_name;
+			current_channel.who.appendChild(name_span);
+		}
+	},
+	display_channels: function (channels_object){
+		var msg_span = document.createElement("div");
+		msg_span.setAttribute("class", "client_info");
+		msg_span.textContent = "Channels list (visible):";
+		this.add_line(msg_span);
+		var channel_details;
+		for(var channel_name in channels_object){
+			channel_details = channels_object[channel_name];
+			msg_span = document.createElement("div");
+			msg_span.setAttribute("class", "client_info");
+			var start_span = document.createElement("span");
+			start_span.textContent = " -- ["+channel_details.population+"]"
+			var name_link = document.createElement("a");
+			name_link.setAttribute("class", "join_link");
+			name_link.setAttribute("href", "#");
+			name_link.textContent = channel_name;
+			var end_span = document.createElement("span");
+			end_span.textContent = " : "+"Topics and links not yet implemented"
+			msg_span.appendChild(start_span);
+			msg_span.appendChild(name_link);
+			msg_span.appendChild(end_span);
+			this.add_line(msg_span);
+		}
+	}
+};
+$("body")[0].onresize = function (){ client.skin.resize()};
+client.skin.resize()
+client.skin.form.onsubmit = function (event){
+	event.preventDefault();
+	var msg_text = client.skin.input.value;
+	client.skin.input.value = null;
+	if(msg_text.charAt(0) == "/"){
+		msg_text = msg_text.slice(1, msg_text.length);
+		var words = msg_text.split(" ");
+		client.handle_command(words);
+		return false;
+		}
+	var msg = new Message(client.name, "#"+client.skin.current_channel.name, ACTION_MESSAGE, msg_text);
+	socket.emit("Artemis:local_traffic", {action: "message", content: msg});
+	return false;
+};
+</script>
+</body>
+</html>
