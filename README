@@ -1,0 +1,7 @@
+Artemis is an inter-server communications project originally created in the DM language.
+The Javascript version is created as an intro to networking using Node.js.
+
+In its current state is has only the basics of communications on one server.
+
+This repository has both the server and a client.
+Were the server finished, the client could be separated into a different project.
